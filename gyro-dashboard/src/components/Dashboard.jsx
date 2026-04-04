@@ -116,9 +116,11 @@ function AxisCard({ axis, value }) {
   )
 }
 
-function StatusBadge({ connected, connecting }) {
-  const color = connected ? '#10b981' : connecting ? '#f59e0b' : '#ef4444'
-  const text = connected ? 'Подключено' : connecting ? 'Подключение...' : 'Отключено'
+function StatusBadge({ connected, connecting, sensorOk = true }) {
+  const color = connected ? (sensorOk ? '#10b981' : '#f59e0b') : connecting ? '#f59e0b' : '#ef4444'
+  const text = connected 
+    ? (sensorOk ? 'Система: OK' : 'Датчик: FAIL') 
+    : (connecting ? 'Подключение...' : 'Отключено')
 
   return (
     <div style={{
@@ -136,7 +138,7 @@ function StatusBadge({ connected, connecting }) {
         borderRadius: '50%',
         background: color,
         boxShadow: `0 0 10px ${color}`,
-        animation: connected ? 'none' : 'blink 1.5s infinite',
+        animation: (connected && sensorOk) ? 'none' : 'blink 1.5s infinite',
       }} />
       <span style={{
         fontSize: '12px',
@@ -149,7 +151,7 @@ function StatusBadge({ connected, connecting }) {
 }
 
 export default function Dashboard({
-  roll, pitch, yaw,
+  roll, pitch, yaw, throttle = 1.0, sensorOk = true,
   connected, connecting,
   espIp, onIpChange, onConnect, onDisconnect,
   onSetZero, onResetOffsets,
@@ -157,6 +159,9 @@ export default function Dashboard({
 }) {
   const [fps, setFps] = useState(0)
   const [msgCount, setMsgCount] = useState(0)
+
+  // Normalize throttle to percentage for progress bar (0.5 - 6.0 range)
+  const throttlePct = Math.min(Math.max((throttle - 0.5) / 5.5 * 100, 0), 100)
 
   useEffect(() => {
     let frames = 0
@@ -223,7 +228,7 @@ export default function Dashboard({
       </div>
 
       {/* Status */}
-      <StatusBadge connected={connected} connecting={connecting} />
+      <StatusBadge connected={connected} connecting={connecting} sensorOk={sensorOk} />
 
       {/* Connection */}
       <div className="glass-card" style={{ padding: '16px' }}>
@@ -282,6 +287,41 @@ export default function Dashboard({
         >
           {connecting ? '⏳ Подключение...' : connected ? '⏹ Отключить' : '▶ Подключиться'}
         </button>
+      </div>
+
+      {/* Throttle Control Indicator */}
+      <div style={{
+        fontSize: '11px',
+        fontWeight: 600,
+        textTransform: 'uppercase',
+        letterSpacing: '1.5px',
+        color: 'var(--text-muted)',
+        marginTop: '4px',
+      }}>Тяга двигателя</div>
+
+      <div className="glass-card" style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ fontSize: '18px', color: '#10b981' }}>⚡</span>
+            <span style={{ 
+              fontWeight: 600, fontSize: '12px', color: 'var(--text-secondary)', textTransform: 'uppercase' 
+            }}>Throttle</span>
+          </div>
+          <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, color: '#10b981', fontSize: '20px' }}>
+            {(throttle * 100).toFixed(0)}%
+          </div>
+        </div>
+        <div style={{
+          width: '100%', height: '8px', borderRadius: '4px', background: 'rgba(255,255,255,0.06)', overflow: 'hidden'
+        }}>
+          <div style={{
+            width: `${throttlePct}%`,
+            height: '100%',
+            background: 'linear-gradient(90deg, #10b981, #34d399)',
+            boxShadow: '0 0 10px rgba(16,185,129,0.3)',
+            transition: 'width 0.1s ease',
+          }} />
+        </div>
       </div>
 
       {/* Axis values */}

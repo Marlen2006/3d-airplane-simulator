@@ -6,6 +6,8 @@ export default function App() {
   const [rawRoll, setRawRoll] = useState(0)
   const [rawPitch, setRawPitch] = useState(0)
   const [rawYaw, setRawYaw] = useState(0)
+  const [throttle, setThrottle] = useState(1.0)
+  const [sensorOk, setSensorOk] = useState(true)
 
   const [offsets, setOffsets] = useState({ roll: 0, pitch: 0, yaw: 0 })
   const [history, setHistory] = useState([])
@@ -51,6 +53,14 @@ export default function App() {
           if (data.yaw   !== undefined) targetY = data.yaw
           else if (data.w !== undefined) targetY = data.w
           else if (data.z !== undefined) targetY = data.z
+
+          if (data.throttle !== undefined) {
+             setThrottle(prev => prev + (data.throttle - prev) * 0.3)
+          }
+
+          if (data.sensor !== undefined) {
+             setSensorOk(!!data.sensor)
+          }
 
           // Apply Low-Pass Filter (Smoothing)
           // NewValue = CurrentValue + (Target - CurrentValue) * Factor
@@ -123,7 +133,10 @@ export default function App() {
         case 'a': case 'A': case 'ф': case 'Ф': setRawYaw(y => y - step); break
         case 'd': case 'D': case 'в': case 'В': setRawYaw(y => y + step); break
         case 'r': case 'R': case 'к': case 'К':
-          setRawRoll(0); setRawPitch(0); setRawYaw(0); setOffsets({ roll: 0, pitch: 0, yaw: 0 }); break
+          setRawRoll(0); setRawPitch(0); setRawYaw(0); setOffsets({ roll: 0, pitch: 0, yaw: 0 }); 
+          setThrottle(1.0); break
+        case 'w': case 'W': case 'ц': case 'Ц': setThrottle(t => Math.min(t + 0.1, 6.0)); break
+        case 's': case 'S': case 'ы': case 'Ы': setThrottle(t => Math.max(t - 0.1, 0.2)); break
       }
     }
     window.addEventListener('keydown', handleKey)
@@ -172,7 +185,7 @@ export default function App() {
         bottom: 0,
         zIndex: 1,
       }}>
-        <Scene3D roll={roll} pitch={pitch} yaw={yaw} connected={connected} />
+        <Scene3D roll={roll} pitch={pitch} yaw={yaw} connected={connected} throttle={throttle} />
       </div>
 
       {/* Dashboard sidebar */}
@@ -180,6 +193,8 @@ export default function App() {
         roll={roll}
         pitch={pitch}
         yaw={yaw}
+        throttle={throttle}
+        sensorOk={sensorOk}
         connected={connected}
         connecting={connecting}
         espIp={espIp}

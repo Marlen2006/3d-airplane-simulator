@@ -1,35 +1,38 @@
 import { Canvas } from '@react-three/fiber'
-import { OrbitControls, Environment, Sparkles, Cloud, Sky, Float, MeshDistortMaterial } from '@react-three/drei'
+import { OrbitControls, Environment, Sparkles, Cloud, Float, MeshDistortMaterial, useTexture } from '@react-three/drei'
 import { Suspense, useRef, useMemo } from 'react'
 import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 import Airplane from './Airplane'
 
-// Infinite moving sea/ground
-function InfiniteSea({ speed = 1.0 }) {
+// Infinite moving terrain (map)
+function InfiniteTerrain({ speed = 1.0 }) {
   const meshRef = useRef()
+  const texture = useTexture('/textures/terrain.png')
   
+  useMemo(() => {
+    texture.wrapS = texture.wrapT = THREE.RepeatWrapping
+    texture.repeat.set(6, 6) 
+    texture.anisotropy = 16
+  }, [texture])
+
   useFrame((state, delta) => {
     if (!meshRef.current) return
-    // Scroll the texture coordinates or the mesh itself
-    meshRef.current.position.z += delta * speed * 80
-    if (meshRef.current.position.z > 50) meshRef.current.position.z = -50
+    texture.offset.y += delta * speed * 0.12 
   })
 
   return (
     <group>
-      <mesh ref={meshRef} rotation={[-Math.PI / 2, 0, 0]} position={[0, -15, 0]}>
-        <planeGeometry args={[2000, 2000, 10, 10]} />
+      <mesh ref={meshRef} rotation={[-Math.PI / 2, 0, 0]} position={[0, -32, 0]} receiveShadow>
+        <planeGeometry args={[4000, 4000, 1, 1]} />
         <meshStandardMaterial 
-          color="#0a1a3a" 
-          roughness={0.2} 
-          metalness={0.8}
-          emissive="#3b82f6"
-          emissiveIntensity={0.1}
+          map={texture}
+          roughness={1} 
+          metalness={0}
+          emissive="#222"
+          emissiveIntensity={0.05}
         />
       </mesh>
-      {/* Decorative Grid for scale perception */}
-      <gridHelper args={[1000, 50, 0x3b82f6, 0x1d4ed8]} position={[0, -14.9, 0]} />
     </group>
   )
 }
@@ -38,30 +41,28 @@ function CloudSystem({ speed = 1.0 }) {
   const group = useRef()
   useFrame((state, delta) => {
     if (group.current) {
-      // Forward flight: Clouds move past the plane (+Z direction)
-      group.current.position.z += delta * speed * 35
-      if (group.current.position.z > 60) group.current.position.z = -100
+      group.current.position.z += delta * speed * 30
+      if (group.current.position.z > 150) group.current.position.z = -200
     }
   })
 
   return (
     <group ref={group}>
-      <Cloud opacity={0.5} speed={0.2} width={15} depth={2} segments={20} position={[30, 2, -120]} />
-      <Cloud opacity={0.4} speed={0.3} width={20} depth={1.5} segments={20} position={[-40, 5, -150]} />
-      <Cloud opacity={0.3} speed={0.4} width={25} depth={1} segments={25} position={[0, -10, -200]} />
-      <Cloud opacity={0.5} speed={0.1} width={30} depth={3} segments={30} position={[60, -5, -180]} />
-      <Cloud opacity={0.4} speed={0.2} width={20} depth={2} segments={20} position={[-70, 8, -130]} />
+      <Cloud opacity={0.2} speed={0.4} width={30} depth={2} segments={20} position={[60, 20, -140]} />
+      <Cloud opacity={0.15} speed={0.3} width={40} depth={1.5} segments={25} position={[-80, 18, -250]} />
+      <Cloud opacity={0.3} speed={0.1} width={35} depth={4} segments={30} position={[0, -5, -300]} />
+      <Cloud opacity={0.2} speed={0.2} width={60} depth={3} segments={40} position={[120, 10, -280]} />
     </group>
   )
 }
 
 function SpeedLines({ speed = 1.0 }) {
   const ref = useRef()
-  const count = 60
+  const count = 120
   const lines = useMemo(() => [...Array(count)].map(() => ({
-    pos: [Math.random() * 40 - 20, Math.random() * 30 - 15, Math.random() * 100 - 150],
-    length: Math.random() * 5 + 5,
-    speed: Math.random() * 40 + 60
+    pos: [Math.random() * 100 - 50, Math.random() * 60 - 30, Math.random() * 300 - 300],
+    length: Math.random() * 12 + 6,
+    speed: Math.random() * 70 + 100
   })), [])
 
   useFrame((state, delta) => {
@@ -69,16 +70,16 @@ function SpeedLines({ speed = 1.0 }) {
     ref.current.children.forEach((mesh, i) => {
       const line = lines[i]
       mesh.position.z += delta * speed * line.speed
-      if (mesh.position.z > 20) mesh.position.z = -150
+      if (mesh.position.z > 100) mesh.position.z = -300
     })
   })
 
   return (
     <group ref={ref}>
       {lines.map((line, i) => (
-        <mesh key={i} position={line.pos} rotation={[0, 0, 0]}>
-          <boxGeometry args={[0.04, 0.04, line.length]} />
-          <meshBasicMaterial color="#3b82f6" transparent opacity={0.4} />
+        <mesh key={i} position={line.pos}>
+          <boxGeometry args={[0.015, 0.015, line.length]} />
+          <meshBasicMaterial color="#ffffff" transparent opacity={0.12} />
         </mesh>
       ))}
     </group>
@@ -91,59 +92,51 @@ function CameraRig({ yaw, pitch }) {
   useFrame((state, delta) => {
     if (!groupRef.current) return
     const targetYaw = (yaw * Math.PI) / 180
-    
-    // Add slight camera shake at high speed (simulated by nose dive)
-    const shake = Math.abs(pitch) > 30 ? (Math.random() - 0.5) * 0.01 : 0
-    
-    // Chase camera pivot
     groupRef.current.rotation.y = THREE.MathUtils.lerp(groupRef.current.rotation.y, -targetYaw, 0.05)
     
-    // Chase camera position (Z=18)
-    state.camera.position.lerp(new THREE.Vector3(shake, 4.0 + shake, 18), 0.1)
-    state.camera.lookAt(0, 1.0, 0)
+    state.camera.position.lerp(new THREE.Vector3(0, 8.0, 26), 0.08)
+    state.camera.lookAt(0, 3.0, 0)
   })
 
   return <group ref={groupRef} />
 }
 
-export default function Scene3D({ roll, pitch, yaw, connected }) {
-  // Velocity increases when diving (pitch > 0) or climbing (pitch < 0)
-  const baseSpeed = 1.5
-  const tiltInfluence = Math.abs(roll) / 45 
-  const currentSpeed = baseSpeed + tiltInfluence
+export default function Scene3D({ roll, pitch, yaw, connected, throttle = 1.0 }) {
+  // Speed depends ONLY on the joystick throttle
+  const currentSpeed = 2.2 * throttle 
 
   return (
     <Canvas
       shadows
-      camera={{ position: [0, 4, 15], fov: 45 }}
+      camera={{ position: [0, 8, 26], fov: 45 }}
       style={{ width: '100%', height: '100%' }}
       gl={{ antialias: true, alpha: true }}
     >
-      <color attach="background" args={['#87ceeb']} />
-      <fog attach="fog" args={['#87ceeb', 20, 200]} />
+      {/* Seamless Fog & Background */}
+      <color attach="background" args={['#c8e6ff']} />
+      <fog attach="fog" args={['#c8e6ff', 20, 450]} />
 
       <Suspense fallback={null}>
-        <ambientLight intensity={1.2} color="#ffffff" />
+        <ambientLight intensity={2.0} color="#ffffff" />
         <directionalLight 
-          position={[100, 150, 100]} 
-          intensity={2.5} 
+          position={[200, 400, 100]} 
+          intensity={4.0} 
           castShadow 
           shadow-mapSize={[2048, 2048]}
         />
-        <Environment preset="city" />
-        <Sky sunPosition={[100, 50, 100]} turbidity={0.1} rayleigh={0.5} />
+        <Environment preset="apartment" />
         
-        <InfiniteSea speed={currentSpeed} />
+        <InfiniteTerrain speed={currentSpeed} />
         <CloudSystem speed={currentSpeed} />
         <SpeedLines speed={currentSpeed} />
         
-        <Sparkles count={80} scale={[100, 50, 150]} size={4} speed={1.5} color="#ffffff" opacity={0.3} />
+        <Sparkles count={150} scale={[250, 150, 300]} size={6} speed={3} color="#ffffff" opacity={0.25} />
 
-        <Float speed={2} rotationIntensity={0.1} floatIntensity={0.2}>
+        <Float speed={0.8} rotationIntensity={0.01} floatIntensity={0.02}>
           <Airplane roll={roll} pitch={pitch} yaw={yaw} />
         </Float>
 
-        <pointLight position={[0, -2, 0]} intensity={connected ? 5 : 2} color="#ffffff" distance={20} />
+        <pointLight position={[0, -5, 10]} intensity={connected ? 20 : 5} color="#ffffff" distance={80} />
         <CameraRig yaw={yaw} pitch={roll} />
       </Suspense>
 
@@ -151,11 +144,11 @@ export default function Scene3D({ roll, pitch, yaw, connected }) {
         enabled={!connected}
         enableDamping
         dampingFactor={0.05}
-        minDistance={10}
-        maxDistance={60}
-        maxPolarAngle={Math.PI / 1.5}
+        minDistance={25}
+        maxDistance={120}
+        maxPolarAngle={Math.PI / 1.7}
         autoRotate={!connected}
-        autoRotateSpeed={0.3}
+        autoRotateSpeed={0.1}
       />
     </Canvas>
   )
