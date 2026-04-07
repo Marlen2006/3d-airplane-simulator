@@ -1,4 +1,4 @@
-import { useRef, useMemo, useEffect } from 'react'
+import { useRef, useMemo, useEffect, forwardRef, useImperativeHandle } from 'react'
 import { useFrame } from '@react-three/fiber'
 import { useGLTF, Sparkles } from '@react-three/drei'
 import * as THREE from 'three'
@@ -6,10 +6,13 @@ import * as THREE from 'three'
 // Preload the model
 useGLTF.preload('/models/f22_raptor.glb')
 
-export default function Airplane({ roll = 0, pitch = 0, yaw = 0, isFiring = false }) {
+const Airplane = forwardRef(({ roll = 0, pitch = 0, yaw = 0, isFiring = false }, ref) => {
   const groupRef = useRef()
   const modelRef = useRef()
   const timeRef = useRef(0)
+  
+  // Expose the groupRef to the parent via forwardRef
+  useImperativeHandle(ref, () => groupRef.current)
 
   // Load the F-22 Raptor model
   const { scene } = useGLTF('/models/f22_raptor.glb')
@@ -121,4 +124,6 @@ export default function Airplane({ roll = 0, pitch = 0, yaw = 0, isFiring = fals
       </group>
     </group>
   )
-}
+})
+ 
+export default Airplane

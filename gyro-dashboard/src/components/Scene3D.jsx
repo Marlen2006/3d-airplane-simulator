@@ -108,6 +108,7 @@ export default function Scene3D({
 }) {
   // Speed depends ONLY on the joystick throttle
   const currentSpeed = 2.2 * throttle 
+  const airplaneRef = useRef()
 
   return (
     <Canvas
@@ -137,10 +138,10 @@ export default function Scene3D({
         <Sparkles count={150} scale={[250, 150, 300]} size={6} speed={3} color="#ffffff" opacity={0.25} />
 
         <Float speed={0.8} rotationIntensity={0.01} floatIntensity={0.02}>
-          <Airplane roll={roll} pitch={pitch} yaw={yaw} isFiring={isFiring} />
+          <Airplane ref={airplaneRef} roll={roll} pitch={pitch} yaw={yaw} isFiring={isFiring} />
         </Float>
 
-        <CombatSystem isFiring={isFiring} onHit={onHit} />
+        <CombatSystem airplaneRef={airplaneRef} isFiring={isFiring} onHit={onHit} />
 
         <pointLight position={[0, -5, 10]} intensity={connected ? 20 : 5} color="#ffffff" distance={80} />
         <CameraRig yaw={yaw} pitch={roll} />

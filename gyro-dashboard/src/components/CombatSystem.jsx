@@ -49,7 +49,7 @@ function Explosion({ position }) {
   )
 }
 
-export default function CombatSystem({ isFiring, onHit, airplanePos = [0, 0, 0] }) {
+export default function CombatSystem({ isFiring, onHit, airplaneRef }) {
   const [bullets, setBullets] = useState([])
   const [drones, setDrones] = useState([])
   const [explosions, setExplosions] = useState([])
@@ -80,12 +80,37 @@ export default function CombatSystem({ isFiring, onHit, airplanePos = [0, 0, 0] 
 
   // Fire logic
   useFrame((state, delta) => {
-    if (isFiring && state.clock.elapsedTime - lastFireTime.current > 0.12) {
+    if (airplaneRef?.current && isFiring && state.clock.elapsedTime - lastFireTime.current > 0.12) {
       lastFireTime.current = state.clock.elapsedTime
       
+      const airplane = airplaneRef.current
+      if (!airplane) return;
+      
+      // Update world matrix to get latest position/rotation
+      airplane.updateMatrixWorld()
+      
+      // Calculate world positions for muzzles
+      const muzzleL = new THREE.Vector3(-0.35, 0, 1.2).applyMatrix4(airplane.matrixWorld)
+      const muzzleR = new THREE.Vector3(0.35, 0, 1.2).applyMatrix4(airplane.matrixWorld)
+      
+      // Calculate world velocity vector
+      const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(airplane.quaternion)
+      const speed = 250
+      const velocity = direction.multiplyScalar(speed)
+      
       const newBullets = [
-        { id: bulletIdCounter.current++, pos: [0.6, 0, 2.5], vel: [0, 0, -250] }, // Right gun
-        { id: bulletIdCounter.current++, pos: [-0.6, 0, 2.5], vel: [0, 0, -250] } // Left gun
+        { 
+          id: bulletIdCounter.current++, 
+          pos: [muzzleL.x, muzzleL.y, muzzleL.z], 
+          vel: [velocity.x, velocity.y, velocity.z],
+          rot: airplane.quaternion.clone()
+        },
+        { 
+          id: bulletIdCounter.current++, 
+          pos: [muzzleR.x, muzzleR.y, muzzleR.z], 
+          vel: [velocity.x, velocity.y, velocity.z],
+          rot: airplane.quaternion.clone()
+        }
       ]
       setBullets(prev => [...prev, ...newBullets])
     }
@@ -158,8 +183,8 @@ export default function CombatSystem({ isFiring, onHit, airplanePos = [0, 0, 0] 
     <group>
       {/* Brilliants/Bullets */}
       {bullets.map(b => (
-        <mesh key={b.id} position={b.pos}>
-          <boxGeometry args={[0.1, 0.1, 2]} />
+        <mesh key={b.id} position={b.pos} quaternion={b.rot}>
+          <boxGeometry args={[0.08, 0.08, 2.5]} />
           <meshBasicMaterial color="#ffff00" />
         </mesh>
       ))}
