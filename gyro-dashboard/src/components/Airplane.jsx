@@ -6,7 +6,7 @@ import * as THREE from 'three'
 // Preload the model
 useGLTF.preload('/models/f22_raptor.glb')
 
-export default function Airplane({ roll = 0, pitch = 0, yaw = 0 }) {
+export default function Airplane({ roll = 0, pitch = 0, yaw = 0, isFiring = false }) {
   const groupRef = useRef()
   const modelRef = useRef()
   const timeRef = useRef(0)
@@ -103,6 +103,21 @@ export default function Airplane({ roll = 0, pitch = 0, yaw = 0 }) {
             <meshStandardMaterial color="#111" emissive="#3b82f6" emissiveIntensity={10} transparent opacity={0.6} />
           </mesh>
         </group>
+
+        {/* Weapons / Muzzle Flash */}
+        {isFiring && (
+          <group position={[0, -0.1, 2.5]}>
+            <mesh position={[0.6, 0, 0]}>
+              <sphereGeometry args={[0.3, 8, 8]} />
+              <meshBasicMaterial color="#ffff00" />
+            </mesh>
+            <mesh position={[-0.6, 0, 0]}>
+              <sphereGeometry args={[0.3, 8, 8]} />
+              <meshBasicMaterial color="#ffff00" />
+            </mesh>
+            <pointLight position={[0, 0, 0]} intensity={15} color="#ffff00" distance={8} />
+          </group>
+        )}
       </group>
     </group>
   )

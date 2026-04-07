@@ -99,6 +99,8 @@ const char* password = "6N52435T6K";  // <-- Замените на пароль
 
 // ========== НАСТРОЙКИ ==========
 #define MPU6050_ADDR 0x68
+#define FIRE_PIN D6          // По умолчанию на пине D6 (GPIO12)
+#define FIRE_ACTIVE_LOW true // true: кнопка замыкает на GND, false: кнопка замыкает на 3.3V
 #define SEND_INTERVAL_MS 50  // Интервал отправки данных (50мс = ~20 Гц)
 
 WebSocketsServer webSocket = WebSocketsServer(81);
@@ -115,6 +117,8 @@ Kalman kalmanPitch;
 // Калибровочные смещения
 float gyroXoffset = 0, gyroYoffset = 0, gyroZoffset = 0;
 bool sensorOk = false;
+uint8_t mpuAddr = 0x68; // Актуальный адрес, найденный при сканировании
+bool lastFireState = false; // Для отладочного вывода
 
 // Таймеры
 unsigned long lastSendTime = 0;
@@ -123,39 +127,61 @@ unsigned long lastGyroTime = 0;
 // ========== MPU6050 ИНИЦИАЛИЗАЦИЯ ==========
 void initMPU6050() {
   Wire.begin(D2, D1); // SDA=D2, SCL=D1
-  Wire.setClock(100000); // 100kHz for better stability with joystick nearby
+  Wire.setClock(100000); 
+  delay(500); // Даем время на стабилизацию питания
 
-  // Проверка присутствия датчика
-  Wire.beginTransmission(MPU6050_ADDR);
-  if (Wire.endTransmission() != 0) {
-    Serial.println("Ошибка: MPU6050 не найден по адресу 0x68!");
+  const uint8_t addresses[] = {0x68, 0x69};
+  int retryCount = 0;
+  bool found = false;
+
+  while (!found && retryCount < 5) {
+    for (uint8_t addr : addresses) {
+      Serial.printf("Попытка поиска MPU6050 на 0x%02X (попытка %d)... ", addr, retryCount + 1);
+      Wire.beginTransmission(addr);
+      if (Wire.endTransmission() == 0) {
+        mpuAddr = addr;
+        found = true;
+        Serial.println("НАЙДЕН!");
+        break;
+      }
+      Serial.println("не ответил.");
+      delay(200);
+    }
+    retryCount++;
+    if (!found) delay(500);
+  }
+
+  if (!found) {
+    Serial.println("КРИТИЧЕСКАЯ ОШИБКА: MPU6050 не обнаружен!");
     sensorOk = false;
     return;
   }
 
   // Пробуждение MPU6050
-  Wire.beginTransmission(MPU6050_ADDR);
+  Wire.beginTransmission(mpuAddr);
   Wire.write(0x6B); // PWR_MGMT_1
   Wire.write(0x00); // Пробудить
   if (Wire.endTransmission() != 0) {
     sensorOk = false;
     return;
   }
+  delay(100); 
+  delay(100); 
 
   // Настройка гироскопа: ±250°/s
-  Wire.beginTransmission(MPU6050_ADDR);
+  Wire.beginTransmission(mpuAddr);
   Wire.write(0x1B); // GYRO_CONFIG
   Wire.write(0x00); // FS_SEL=0 -> ±250°/s
   Wire.endTransmission();
 
   // Настройка акселерометра: ±2g
-  Wire.beginTransmission(MPU6050_ADDR);
+  Wire.beginTransmission(mpuAddr);
   Wire.write(0x1C); // ACCEL_CONFIG
   Wire.write(0x00); // AFS_SEL=0 -> ±2g
   Wire.endTransmission();
 
   // Настройка фильтра: ~44Hz bandwidth
-  Wire.beginTransmission(MPU6050_ADDR);
+  Wire.beginTransmission(mpuAddr);
   Wire.write(0x1A); // CONFIG
   Wire.write(0x03);
   Wire.endTransmission();
@@ -184,10 +210,10 @@ void initMPU6050() {
 
 // ========== ЧТЕНИЕ СЫРЫХ ДАННЫХ ==========
 void readGyroRaw(int16_t &gx, int16_t &gy, int16_t &gz) {
-  Wire.beginTransmission(MPU6050_ADDR);
+  Wire.beginTransmission(mpuAddr);
   Wire.write(0x43); // gyro register
   if (Wire.endTransmission(false) != 0) { gx = gy = gz = 0; return; }
-  if (Wire.requestFrom((int)MPU6050_ADDR, 6, (int)true) == 6) {
+  if (Wire.requestFrom((int)mpuAddr, 6, (int)true) == 6) {
     gx = (Wire.read() << 8) | Wire.read();
     gy = (Wire.read() << 8) | Wire.read();
     gz = (Wire.read() << 8) | Wire.read();
@@ -195,10 +221,10 @@ void readGyroRaw(int16_t &gx, int16_t &gy, int16_t &gz) {
 }
 
 void readAccelRaw(int16_t &ax, int16_t &ay, int16_t &az) {
-  Wire.beginTransmission(MPU6050_ADDR);
+  Wire.beginTransmission(mpuAddr);
   Wire.write(0x3B); // accel register
   if (Wire.endTransmission(false) != 0) { ax = ay = az = 0; return; }
-  if (Wire.requestFrom((int)MPU6050_ADDR, 6, (int)true) == 6) {
+  if (Wire.requestFrom((int)mpuAddr, 6, (int)true) == 6) {
     ax = (Wire.read() << 8) | Wire.read();
     ay = (Wire.read() << 8) | Wire.read();
     az = (Wire.read() << 8) | Wire.read();
@@ -276,6 +302,9 @@ void setup() {
   initMPU6050();
   lastGyroTime = micros();
 
+  // Инициализация кнопки огня
+  pinMode(FIRE_PIN, INPUT_PULLUP);
+
   // Wi-Fi подключение
   #ifdef USE_ACCESS_POINT
     // Режим точки доступа
@@ -329,16 +358,27 @@ void loop() {
     // Маппинг: 0 -> 6.0 (600% макс), 512 -> 1.0 (норма), 1023 -> 0.5 (50% мин)
     float throttle = map(rawJoy, 0, 1023, 600, 50) / 100.0;
 
+    // Чтение кнопки огня с учетом инверсии
+    bool isFiring = FIRE_ACTIVE_LOW ? !digitalRead(FIRE_PIN) : digitalRead(FIRE_PIN);
+
     // Формируем JSON
     StaticJsonDocument<256> doc; 
     doc["roll"]  = round(roll  * 10.0) / 10.0;
     doc["pitch"] = round(pitch * 10.0) / 10.0;
     doc["yaw"]   = round(yaw   * 10.0) / 10.0;
     doc["throttle"] = round(throttle * 100.0) / 100.0;
+    doc["fire"]   = isFiring;
     doc["sensor"] = sensorOk;
 
     String json;
     serializeJson(doc, json);
+
+    // Вывод в Serial только при изменении состояния (чтобы не спамить)
+    if (isFiring != lastFireState) {
+      if (isFiring) Serial.println("[FIRE] Pressed");
+      else Serial.println("[FIRE] Released");
+      lastFireState = isFiring;
+    }
 
     // Отправляем всем подключенным клиентам
     webSocket.broadcastTXT(json);

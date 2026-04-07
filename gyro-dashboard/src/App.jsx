@@ -8,6 +8,18 @@ export default function App() {
   const [rawYaw, setRawYaw] = useState(0)
   const [throttle, setThrottle] = useState(1.0)
   const [sensorOk, setSensorOk] = useState(true)
+  const [isFiring, setIsFiring] = useState(false)
+  const [score, setScore] = useState(0)
+
+  // Refs for accessing values in onmessage without re-creating the WS
+  const rawRollRef = useRef(0)
+  const rawPitchRef = useRef(0)
+  const rawYawRef = useRef(0)
+
+  // Keep refs in sync
+  useEffect(() => { rawRollRef.current = rawRoll }, [rawRoll])
+  useEffect(() => { rawPitchRef.current = rawPitch }, [rawPitch])
+  useEffect(() => { rawYawRef.current = rawYaw }, [rawYaw])
 
   const [offsets, setOffsets] = useState({ roll: 0, pitch: 0, yaw: 0 })
   const [history, setHistory] = useState([])
@@ -40,26 +52,31 @@ export default function App() {
       ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data)
-          let targetR = 0, targetP = 0, targetY = 0
+          
+          // Initialize with ref values to avoid resetting to 0
+          let targetR = rawRollRef.current
+          let targetP = rawPitchRef.current
+          let targetY = rawYawRef.current
 
           if (data.roll  !== undefined) targetR = data.roll
           else if (data.r !== undefined) targetR = data.r
-          else if (data.x !== undefined) targetR = data.x
 
           if (data.pitch !== undefined) targetP = data.pitch
           else if (data.p !== undefined) targetP = data.p
-          else if (data.y !== undefined) targetP = data.y
 
           if (data.yaw   !== undefined) targetY = data.yaw
           else if (data.w !== undefined) targetY = data.w
-          else if (data.z !== undefined) targetY = data.z
 
           if (data.throttle !== undefined) {
-             setThrottle(prev => prev + (data.throttle - prev) * 0.3)
+             setThrottle(prev => (Math.abs(prev - data.throttle) > 0.01 ? data.throttle : prev))
+          }
+
+          if (data.fire !== undefined) {
+             setIsFiring(prev => (prev !== !!data.fire ? !!data.fire : prev))
           }
 
           if (data.sensor !== undefined) {
-             setSensorOk(!!data.sensor)
+             setSensorOk(prev => (prev !== !!data.sensor ? !!data.sensor : prev))
           }
 
           // Apply Low-Pass Filter (Smoothing)
@@ -69,6 +86,7 @@ export default function App() {
           setRawPitch(prev => prev + (targetP - prev) * smoothingFactor)
           setRawYaw(prev => prev + (targetY - prev) * smoothingFactor)
         } catch (err) {
+          console.error('[WS] Parse error:', err, event.data)
           const parts = event.data.split(',').map(Number)
           if (parts.length === 3 && parts.every(n => !isNaN(n))) {
             const smoothingFactor = 0.3
@@ -137,11 +155,96 @@ export default function App() {
           setThrottle(1.0); break
         case 'w': case 'W': case 'ц': case 'Ц': setThrottle(t => Math.min(t + 0.1, 6.0)); break
         case 's': case 'S': case 'ы': case 'Ы': setThrottle(t => Math.max(t - 0.1, 0.2)); break
+        case ' ': setIsFiring(true); break
       }
     }
+    const handleKeyUp = (e) => {
+      if (e.key === ' ') setIsFiring(false)
+    }
     window.addEventListener('keydown', handleKey)
-    return () => window.removeEventListener('keydown', handleKey)
+    window.addEventListener('keyup', handleKeyUp)
+    return () => {
+      window.removeEventListener('keydown', handleKey)
+      window.removeEventListener('keyup', handleKeyUp)
+    }
   }, [connected])
+
+  // --- AUDIO SYNTHESIZER ---
+  const audioCtx = useRef(null)
+  const initAudio = () => {
+    if (!audioCtx.current) {
+      audioCtx.current = new (window.AudioContext || window.webkitAudioContext)()
+    }
+  }
+
+  const playShootSound = useCallback(() => {
+    initAudio()
+    const ctx = audioCtx.current
+    const osc = ctx.createOscillator()
+    const gain = ctx.createGain()
+    
+    osc.type = 'square'
+    osc.frequency.setValueAtTime(150, ctx.currentTime)
+    osc.frequency.exponentialRampToValueAtTime(40, ctx.currentTime + 0.1)
+    
+    gain.gain.setValueAtTime(0.1, ctx.currentTime)
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.1)
+    
+    osc.connect(gain)
+    gain.connect(ctx.destination)
+    
+    osc.start()
+    osc.stop(ctx.currentTime + 0.1)
+  }, [])
+
+  const playExplosionSound = useCallback(() => {
+    initAudio()
+    const ctx = audioCtx.current
+    const noise = ctx.createBufferSource()
+    const buffer = ctx.createBuffer(1, ctx.sampleRate * 0.5, ctx.sampleRate)
+    const data = buffer.getChannelData(0)
+    for (let i = 0; i < buffer.length; i++) data[i] = Math.random() * 2 - 1
+    
+    noise.buffer = buffer
+    const gain = ctx.createGain()
+    const filter = ctx.createBiquadFilter()
+    
+    filter.type = 'lowpass'
+    filter.frequency.setValueAtTime(400, ctx.currentTime)
+    filter.frequency.exponentialRampToValueAtTime(10, ctx.currentTime + 0.5)
+    
+    gain.gain.setValueAtTime(0.3, ctx.currentTime)
+    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5)
+    
+    noise.connect(filter)
+    filter.connect(gain)
+    gain.connect(ctx.destination)
+    
+    noise.start()
+    noise.stop(ctx.currentTime + 0.5)
+  }, [])
+
+  // Trigger sound on fire
+  const lastFireTime = useRef(0)
+  useEffect(() => {
+    if (isFiring && Date.now() - lastFireTime.current > 120) {
+      playShootSound()
+      lastFireTime.current = Date.now()
+    }
+  }, [isFiring, playShootSound])
+
+  const onHit = useCallback(() => {
+    setScore(s => s + 100)
+    playExplosionSound()
+  }, [playExplosionSound])
+
+  useEffect(() => {
+    if (audioCtx.current && audioCtx.current.state === 'suspended') {
+      const resume = () => audioCtx.current.resume()
+      window.addEventListener('click', resume, { once: true })
+      return () => window.removeEventListener('click', resume)
+    }
+  }, [])
 
   // Computed values
   const roll  = rawRoll - offsets.roll
@@ -185,7 +288,29 @@ export default function App() {
         bottom: 0,
         zIndex: 1,
       }}>
-        <Scene3D roll={roll} pitch={pitch} yaw={yaw} connected={connected} throttle={throttle} />
+        <Scene3D 
+          roll={roll} 
+          pitch={pitch} 
+          yaw={yaw} 
+          connected={connected} 
+          throttle={throttle} 
+          isFiring={isFiring}
+          onHit={onHit}
+        />
+      </div>
+
+      {/* Score Overlay */}
+      <div className="neon-cyan" style={{
+        position: 'absolute',
+        top: '30px',
+        right: '40px',
+        zIndex: 10,
+        fontSize: '32px',
+        fontFamily: 'var(--font-display)',
+        fontWeight: 700,
+        letterSpacing: '2px',
+      }}>
+        SCORE: {score.toString().padStart(6, '0')}
       </div>
 
       {/* Dashboard sidebar */}

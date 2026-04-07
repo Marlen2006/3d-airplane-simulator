@@ -4,6 +4,7 @@ import { Suspense, useRef, useMemo } from 'react'
 import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 import Airplane from './Airplane'
+import CombatSystem from './CombatSystem'
 
 // Infinite moving terrain (map)
 function InfiniteTerrain({ speed = 1.0 }) {
@@ -101,7 +102,10 @@ function CameraRig({ yaw, pitch }) {
   return <group ref={groupRef} />
 }
 
-export default function Scene3D({ roll, pitch, yaw, connected, throttle = 1.0 }) {
+export default function Scene3D({ 
+  roll, pitch, yaw, connected, throttle = 1.0, 
+  isFiring = false, onHit 
+}) {
   // Speed depends ONLY on the joystick throttle
   const currentSpeed = 2.2 * throttle 
 
@@ -133,8 +137,10 @@ export default function Scene3D({ roll, pitch, yaw, connected, throttle = 1.0 })
         <Sparkles count={150} scale={[250, 150, 300]} size={6} speed={3} color="#ffffff" opacity={0.25} />
 
         <Float speed={0.8} rotationIntensity={0.01} floatIntensity={0.02}>
-          <Airplane roll={roll} pitch={pitch} yaw={yaw} />
+          <Airplane roll={roll} pitch={pitch} yaw={yaw} isFiring={isFiring} />
         </Float>
+
+        <CombatSystem isFiring={isFiring} onHit={onHit} />
 
         <pointLight position={[0, -5, 10]} intensity={connected ? 20 : 5} color="#ffffff" distance={80} />
         <CameraRig yaw={yaw} pitch={roll} />
