@@ -114,6 +114,7 @@ Kalman kalmanPitch;
 
 // Калибровочные смещения
 float gyroXoffset = 0, gyroYoffset = 0, gyroZoffset = 0;
+bool sensorOk = false;
 
 // Таймеры
 unsigned long lastSendTime = 0;
@@ -122,31 +123,42 @@ unsigned long lastGyroTime = 0;
 // ========== MPU6050 ИНИЦИАЛИЗАЦИЯ ==========
 void initMPU6050() {
   Wire.begin(D2, D1); // SDA=D2, SCL=D1
-  Wire.setClock(400000);
+  Wire.setClock(100000); // 100kHz for better stability with joystick nearby
+
+  // Проверка присутствия датчика
+  Wire.beginTransmission(MPU6050_ADDR);
+  if (Wire.endTransmission() != 0) {
+    Serial.println("Ошибка: MPU6050 не найден по адресу 0x68!");
+    sensorOk = false;
+    return;
+  }
 
   // Пробуждение MPU6050
   Wire.beginTransmission(MPU6050_ADDR);
   Wire.write(0x6B); // PWR_MGMT_1
   Wire.write(0x00); // Пробудить
-  Wire.endTransmission(true);
+  if (Wire.endTransmission() != 0) {
+    sensorOk = false;
+    return;
+  }
 
   // Настройка гироскопа: ±250°/s
   Wire.beginTransmission(MPU6050_ADDR);
   Wire.write(0x1B); // GYRO_CONFIG
   Wire.write(0x00); // FS_SEL=0 -> ±250°/s
-  Wire.endTransmission(true);
+  Wire.endTransmission();
 
   // Настройка акселерометра: ±2g
   Wire.beginTransmission(MPU6050_ADDR);
   Wire.write(0x1C); // ACCEL_CONFIG
   Wire.write(0x00); // AFS_SEL=0 -> ±2g
-  Wire.endTransmission(true);
+  Wire.endTransmission();
 
   // Настройка фильтра: ~44Hz bandwidth
   Wire.beginTransmission(MPU6050_ADDR);
   Wire.write(0x1A); // CONFIG
   Wire.write(0x03);
-  Wire.endTransmission(true);
+  Wire.endTransmission();
 
   delay(100);
 
@@ -165,43 +177,52 @@ void initMPU6050() {
   gyroXoffset = sumX / samples;
   gyroYoffset = sumY / samples;
   gyroZoffset = sumZ / samples;
-  Serial.println("Калибровка завершена!");
+  
+  sensorOk = true;
+  Serial.println("MPU6050 успешно инициализирован!");
 }
 
 // ========== ЧТЕНИЕ СЫРЫХ ДАННЫХ ==========
 void readGyroRaw(int16_t &gx, int16_t &gy, int16_t &gz) {
   Wire.beginTransmission(MPU6050_ADDR);
-  Wire.write(0x43); // GYRO_XOUT_H
-  Wire.endTransmission(false);
-  Wire.requestFrom((int)MPU6050_ADDR, 6, (int)true);
-
-  gx = (Wire.read() << 8) | Wire.read();
-  gy = (Wire.read() << 8) | Wire.read();
-  gz = (Wire.read() << 8) | Wire.read();
+  Wire.write(0x43); // gyro register
+  if (Wire.endTransmission(false) != 0) { gx = gy = gz = 0; return; }
+  if (Wire.requestFrom((int)MPU6050_ADDR, 6, (int)true) == 6) {
+    gx = (Wire.read() << 8) | Wire.read();
+    gy = (Wire.read() << 8) | Wire.read();
+    gz = (Wire.read() << 8) | Wire.read();
+  } else { gx = gy = gz = 0; }
 }
 
 void readAccelRaw(int16_t &ax, int16_t &ay, int16_t &az) {
   Wire.beginTransmission(MPU6050_ADDR);
-  Wire.write(0x3B); // ACCEL_XOUT_H
-  Wire.endTransmission(false);
-  Wire.requestFrom((int)MPU6050_ADDR, 6, (int)true);
-
-  ax = (Wire.read() << 8) | Wire.read();
-  ay = (Wire.read() << 8) | Wire.read();
-  az = (Wire.read() << 8) | Wire.read();
+  Wire.write(0x3B); // accel register
+  if (Wire.endTransmission(false) != 0) { ax = ay = az = 0; return; }
+  if (Wire.requestFrom((int)MPU6050_ADDR, 6, (int)true) == 6) {
+    ax = (Wire.read() << 8) | Wire.read();
+    ay = (Wire.read() << 8) | Wire.read();
+    az = (Wire.read() << 8) | Wire.read();
+  } else { ax = ay = az = 0; }
 }
 
 // ========== РАСЧЁТ УГЛОВ ==========
 void updateAngles() {
   unsigned long now = micros();
   float dt = (now - lastGyroTime) / 1000000.0;
-  lastGyroTime = now;
 
-  if (dt <= 0 || dt > 0.5) return;
+  // Если задержка слишком большая (напр. после WiFi/калибровки), сбрасываем таймер
+  if (dt > 0.5) {
+    lastGyroTime = now;
+    return;
+  }
+  
+  // Если задержка слишком маленькая, пропускаем и копим время
+  if (dt <= 0.0001) return; 
+  
+  lastGyroTime = now; // Теперь время обновляется корректно
 
   int16_t gx, gy, gz;
   readGyroRaw(gx, gy, gz);
-
   int16_t ax, ay, az;
   readAccelRaw(ax, ay, az);
 
@@ -303,11 +324,18 @@ void loop() {
   if (millis() - lastSendTime >= SEND_INTERVAL_MS) {
     lastSendTime = millis();
 
+    // Чтение джойстика (тяга/скорость)
+    int rawJoy = analogRead(A0);
+    // Маппинг: 0 -> 6.0 (600% макс), 512 -> 1.0 (норма), 1023 -> 0.5 (50% мин)
+    float throttle = map(rawJoy, 0, 1023, 600, 50) / 100.0;
+
     // Формируем JSON
-    StaticJsonDocument<128> doc;
+    StaticJsonDocument<256> doc; 
     doc["roll"]  = round(roll  * 10.0) / 10.0;
     doc["pitch"] = round(pitch * 10.0) / 10.0;
     doc["yaw"]   = round(yaw   * 10.0) / 10.0;
+    doc["throttle"] = round(throttle * 100.0) / 100.0;
+    doc["sensor"] = sensorOk;
 
     String json;
     serializeJson(doc, json);
