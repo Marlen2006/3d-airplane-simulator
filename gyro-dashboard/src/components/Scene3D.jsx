@@ -7,31 +7,38 @@ import Airplane from './Airplane'
 import CombatSystem from './CombatSystem'
 
 // Infinite moving terrain (map)
-function InfiniteTerrain({ speed = 1.0 }) {
+function InfiniteTerrain({ airplaneRef }) {
   const meshRef = useRef()
   const texture = useTexture('/textures/terrain.png')
   
   useMemo(() => {
     texture.wrapS = texture.wrapT = THREE.RepeatWrapping
-    texture.repeat.set(6, 6) 
+    texture.repeat.set(30, 30) // More repeats for a larger visual scale
     texture.anisotropy = 16
   }, [texture])
 
-  useFrame((state, delta) => {
-    if (!meshRef.current) return
-    texture.offset.y += delta * speed * 0.12 
+  useFrame(() => {
+    if (!meshRef.current || !airplaneRef.current) return
+    const planePos = airplaneRef.current.position 
+    // Snap terrain position to airplane X/Z, keep Y
+    meshRef.current.position.set(planePos.x, -100, planePos.z)
+    
+    // Offset UVs based on absolute world X/Z to create the illusion of infinite floor
+    // Plane is 20000x20000, repeat is 30x30
+    texture.offset.x = (planePos.x / 20000) * 30
+    texture.offset.y = -(planePos.z / 20000) * 30
   })
 
   return (
     <group>
-      <mesh ref={meshRef} rotation={[-Math.PI / 2, 0, 0]} position={[0, -32, 0]} receiveShadow>
-        <planeGeometry args={[4000, 4000, 1, 1]} />
+      <mesh ref={meshRef} rotation={[-Math.PI / 2, 0, 0]} position={[0, -100, 0]} receiveShadow>
+        <planeGeometry args={[20000, 20000, 1, 1]} />
         <meshStandardMaterial 
           map={texture}
           roughness={1} 
           metalness={0}
-          emissive="#222"
-          emissiveIntensity={0.05}
+          emissive="#111"
+          emissiveIntensity={0.2}
         />
       </mesh>
     </group>
@@ -87,19 +94,37 @@ function SpeedLines({ speed = 1.0 }) {
   )
 }
 
-function CameraRig({ yaw, pitch }) {
-  const groupRef = useRef()
+function CameraRig({ airplaneRef }) {
+  const lookAtRef = useRef(new THREE.Vector3())
   
   useFrame((state, delta) => {
-    if (!groupRef.current) return
-    const targetYaw = (yaw * Math.PI) / 180
-    groupRef.current.rotation.y = THREE.MathUtils.lerp(groupRef.current.rotation.y, -targetYaw, 0.05)
+    if (!airplaneRef.current) return
+    const airplane = airplaneRef.current
+
+    // Ideal camera position: behind and above
+    const idealOffset = new THREE.Vector3(0, 4.0, 18)
+    idealOffset.applyQuaternion(airplane.quaternion)
+    idealOffset.add(airplane.position)
     
-    state.camera.position.lerp(new THREE.Vector3(0, 8.0, 26), 0.08)
-    state.camera.lookAt(0, 3.0, 0)
+    // Ideal look at point: ahead of the plane, but slightly influenced by UP vector
+    const idealLookAt = new THREE.Vector3(0, 0, -50)
+    idealLookAt.applyQuaternion(airplane.quaternion)
+    idealLookAt.add(airplane.position)
+    
+    // Lerp camera for smooth chase effect
+    state.camera.position.lerp(idealOffset, 0.08)
+    
+    // Smoothly look at target
+    lookAtRef.current.lerp(idealLookAt, 0.1)
+    state.camera.lookAt(lookAtRef.current)
+    
+    // Update camera up vector to match airplane roll
+    const upVector = new THREE.Vector3(0, 1, 0).applyQuaternion(airplane.quaternion)
+    // Lerp UP vector for realistic camera tilt
+    state.camera.up.lerp(upVector, 0.04)
   })
 
-  return <group ref={groupRef} />
+  return null
 }
 
 export default function Scene3D({ 
@@ -131,32 +156,23 @@ export default function Scene3D({
         />
         <Environment preset="apartment" />
         
-        <InfiniteTerrain speed={currentSpeed} />
+        <InfiniteTerrain airplaneRef={airplaneRef} />
+        
+        {/* We keep old cloud system but position it relative to the airplane loosely */}
+        {/* Skipping extensive cloud refactor to save time, they will just exist in world space */}
         <CloudSystem speed={currentSpeed} />
-        <SpeedLines speed={currentSpeed} />
+        {/* Removing speed lines as they break with real 3D movement, or we could parent them to plane */}
         
         <Sparkles count={150} scale={[250, 150, 300]} size={6} speed={3} color="#ffffff" opacity={0.25} />
 
-        <Float speed={0.8} rotationIntensity={0.01} floatIntensity={0.02}>
-          <Airplane ref={airplaneRef} roll={roll} pitch={pitch} yaw={yaw} isFiring={isFiring} />
-        </Float>
+        <Airplane ref={airplaneRef} roll={roll} pitch={pitch} yaw={yaw} isFiring={isFiring} throttle={throttle} />
 
         <CombatSystem airplaneRef={airplaneRef} isFiring={isFiring} onHit={onHit} />
 
         <pointLight position={[0, -5, 10]} intensity={connected ? 20 : 5} color="#ffffff" distance={80} />
-        <CameraRig yaw={yaw} pitch={roll} />
+        <CameraRig airplaneRef={airplaneRef} />
       </Suspense>
 
-      <OrbitControls
-        enabled={!connected}
-        enableDamping
-        dampingFactor={0.05}
-        minDistance={25}
-        maxDistance={120}
-        maxPolarAngle={Math.PI / 1.7}
-        autoRotate={!connected}
-        autoRotateSpeed={0.1}
-      />
     </Canvas>
   )
 }

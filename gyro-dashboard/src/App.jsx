@@ -138,28 +138,37 @@ export default function App() {
     }
   }, [])
 
-  // Demo mode: simulate gyro data when not connected (keyboard)
+  // Demo mode: simulate joystick with keyboard
+  const keys = useRef({ left: false, right: false, up: false, down: false, yawLeft: false, yawRight: false })
+  
   useEffect(() => {
     const handleKey = (e) => {
       if (connected) return
-      const step = 5
-      switch (e.key) {
-        case 'ArrowLeft':  setRawRoll(r => Math.max(r - step, -180)); break
-        case 'ArrowRight': setRawRoll(r => Math.min(r + step, 180));  break
-        case 'ArrowUp':    setRawPitch(p => Math.min(p + step, 90));   break
-        case 'ArrowDown':  setRawPitch(p => Math.max(p - step, -90));  break
-        case 'a': case 'A': case 'ф': case 'Ф': setRawYaw(y => y - step); break
-        case 'd': case 'D': case 'в': case 'В': setRawYaw(y => y + step); break
-        case 'r': case 'R': case 'к': case 'К':
+      switch (e.key.toLowerCase()) {
+        case 'arrowleft': case 'a': case 'ф': keys.current.left = true; break
+        case 'arrowright': case 'd': case 'в': keys.current.right = true; break
+        case 'arrowup': case 'w': case 'ц': keys.current.up = true; break
+        case 'arrowdown': case 's': case 'ы': keys.current.down = true; break
+        case 'q': case 'й': keys.current.yawLeft = true; break
+        case 'e': case 'у': keys.current.yawRight = true; break
+        case 'r': case 'к': 
           setRawRoll(0); setRawPitch(0); setRawYaw(0); setOffsets({ roll: 0, pitch: 0, yaw: 0 }); 
           setThrottle(1.0); break
-        case 'w': case 'W': case 'ц': case 'Ц': setThrottle(t => Math.min(t + 0.1, 6.0)); break
-        case 's': case 'S': case 'ы': case 'Ы': setThrottle(t => Math.max(t - 0.1, 0.2)); break
         case ' ': setIsFiring(true); break
+        case 'shift': setThrottle(t => Math.min(t + 0.5, 6.0)); break
+        case 'control': setThrottle(t => Math.max(t - 0.5, 0.2)); break
       }
     }
     const handleKeyUp = (e) => {
-      if (e.key === ' ') setIsFiring(false)
+      switch (e.key.toLowerCase()) {
+        case 'arrowleft': case 'a': case 'ф': keys.current.left = false; break
+        case 'arrowright': case 'd': case 'в': keys.current.right = false; break
+        case 'arrowup': case 'w': case 'ц': keys.current.up = false; break
+        case 'arrowdown': case 's': case 'ы': keys.current.down = false; break
+        case 'q': case 'й': keys.current.yawLeft = false; break
+        case 'e': case 'у': keys.current.yawRight = false; break
+        case ' ': setIsFiring(false); break
+      }
     }
     window.addEventListener('keydown', handleKey)
     window.addEventListener('keyup', handleKeyUp)
@@ -167,6 +176,49 @@ export default function App() {
       window.removeEventListener('keydown', handleKey)
       window.removeEventListener('keyup', handleKeyUp)
     }
+  }, [connected])
+
+  // Joystick interpolation loop
+  useEffect(() => {
+    if (connected) return
+    let animationFrameId
+    let lastTime = performance.now()
+    
+    // Joystick ranges in degrees (arbitrary max tilt angles)
+    const MAX_ROLL = 60
+    const MAX_PITCH = 45
+    const MAX_YAW = 45
+    
+    const loop = (time) => {
+      const delta = (time - lastTime) / 1000
+      lastTime = time
+      
+      setRawRoll(prev => {
+        let target = 0
+        if (keys.current.left) target = -MAX_ROLL // bank left
+        if (keys.current.right) target = MAX_ROLL // bank right
+        // interpolate smoothly
+        return prev + (target - prev) * 5.0 * delta
+      })
+      
+      setRawPitch(prev => {
+        let target = 0
+        if (keys.current.up) target = -MAX_PITCH // nose down
+        if (keys.current.down) target = MAX_PITCH // nose up (pull back)
+        return prev + (target - prev) * 5.0 * delta
+      })
+
+      setRawYaw(prev => {
+        let target = 0
+        if (keys.current.yawLeft) target = -MAX_YAW // rudder left
+        if (keys.current.yawRight) target = MAX_YAW // rudder right
+        return prev + (target - prev) * 5.0 * delta
+      })
+      
+      animationFrameId = requestAnimationFrame(loop)
+    }
+    animationFrameId = requestAnimationFrame(loop)
+    return () => cancelAnimationFrame(animationFrameId)
   }, [connected])
 
   // --- AUDIO SYNTHESIZER & ENGINE AUDIO ---
@@ -444,8 +496,12 @@ export default function App() {
           color: 'var(--text-muted)',
           lineHeight: 1.6,
         }}>
-          <span style={{ color: 'var(--text-secondary)', fontWeight: 600 }}>Демо-режим:</span><br/>
-          ← → : Roll &nbsp;|&nbsp; ↑ ↓ : Pitch &nbsp;|&nbsp; A / D : Yaw &nbsp;|&nbsp; R : Сброс
+          <span style={{ color: 'var(--text-secondary)', fontWeight: 600 }}>Управление самолетом (Аркада):</span><br/>
+          W / S : Тангаж (вверх/вниз)<br/>
+          A / D : Крен (влево/вправо) - чтобы повернуть<br/>
+          Q / E : Рысканье (педали)<br/>
+          Shift / Ctrl : Газ / Тормоз <br/>
+          Пробел : Огонь
         </div>
       )}
     </div>

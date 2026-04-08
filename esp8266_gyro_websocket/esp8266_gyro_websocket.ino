@@ -292,11 +292,11 @@ void setup() {
   delay(500); // Give serial some time to init
   Serial.println("\n=== ESP8266 Gyroscope WebSocket Server ===");
 
-  // Настройка фильтров Калмана для максимальной стабильности
-  // По умолчанию: Q_angle=0.001, Q_bias=0.003, R_measure=0.03
-  // Увеличиваем R_measure (Measurement Noise), чтобы фильтр игнорировал мелкие скачки датчика
-  kalmanRoll.setParameters(0.0005, 0.001, 0.5);  // Огромная инерция для Roll (стабилизация)
-  kalmanPitch.setParameters(0.0005, 0.001, 0.3); // Высокая инерция для Pitch
+  // Настройка фильтров Калмана для аркадного режима (Быстрый отклик)
+  // Мы уменьшаем R_measure, чтобы датчик моментально реагировал на наклоны.
+  // Инерцию теперь берет на себя игровая физика в браузере.
+  kalmanRoll.setParameters(0.001, 0.003, 0.03);  
+  kalmanPitch.setParameters(0.001, 0.003, 0.03); 
 
   // Инициализация MPU6050
   initMPU6050();

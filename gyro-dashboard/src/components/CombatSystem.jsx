@@ -89,16 +89,22 @@ export default function CombatSystem({ isFiring, onHit, airplaneRef }) {
   const droneIdCounter = useRef(0)
   const missileIdCounter = useRef(0)
 
-  // Spawn drones periodically
+  // Spawn drones periodically relative to the airplane
   useEffect(() => {
     const interval = setInterval(() => {
-      if (drones.length < 5) {
+      if (drones.length < 5 && airplaneRef.current) {
+        const airplane = airplaneRef.current
+        
+        // Find a point roughly 400 units in front of the airplane
+        const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(airplane.quaternion)
+        const spawnCenter = airplane.position.clone().add(forward.multiplyScalar(400))
+        
         setDrones(prev => [...prev, {
           id: droneIdCounter.current++,
           position: [
-            (Math.random() - 0.5) * 60, 
-            (Math.random() - 0.5) * 30 + 5, 
-            -300 // Spawn far away
+            spawnCenter.x + (Math.random() - 0.5) * 200, 
+            Math.max(5, airplane.position.y + (Math.random() - 0.5) * 80), 
+            spawnCenter.z + (Math.random() - 0.5) * 200
           ],
           health: 1,
           seed: Math.random() * 100, // For movement patterns
@@ -107,7 +113,7 @@ export default function CombatSystem({ isFiring, onHit, airplaneRef }) {
       }
     }, 2000)
     return () => clearInterval(interval)
-  }, [drones.length])
+  }, [drones.length, airplaneRef])
 
   // Fire logic
   useFrame((state, delta) => {
@@ -197,24 +203,35 @@ export default function CombatSystem({ isFiring, onHit, airplaneRef }) {
           rot: currentRot
         }
       })
-      .filter(m => m.pos[2] > -600 && m.pos[2] < 100)
+      // Cleanup missiles that have flown too far from the airplane
+      .filter(m => {
+        if (!airplaneRef.current) return false
+        const distSq = airplaneRef.current.position.distanceToSquared(new THREE.Vector3(...m.pos))
+        return distSq < 1000 * 1000
+      })
     )
 
-    // Update Drones (Maneuvering)
+    // Update Drones (Maneuvering locally while airplane flies past)
     setDrones(prev => prev.map(d => {
       const time = state.clock.elapsedTime + d.seed
-      const maneuverX = Math.sin(time * 1.5) * 15 * delta
-      const maneuverY = Math.cos(time * 2.0) * 8 * delta
+      const maneuverX = Math.sin(time * 1.5) * 25 * delta
+      const maneuverY = Math.cos(time * 2.0) * 15 * delta
+      const maneuverZ = Math.sin(time * 0.8) * 25 * delta
       
       return {
         ...d,
         position: [
           d.position[0] + maneuverX,
           d.position[1] + maneuverY,
-          d.position[2] + d.speed * delta
+          d.position[2] + maneuverZ
         ]
       }
-    }).filter(d => d.position[2] < 50))
+    }).filter(d => {
+       // Cleanup drones that the airplane flew past and are now far away
+       if (!airplaneRef.current) return true
+       const distSq = airplaneRef.current.position.distanceToSquared(new THREE.Vector3(...d.position))
+       return distSq < 1000 * 1000
+    }))
 
     // Collision Detection
     setMissiles(prevM => {

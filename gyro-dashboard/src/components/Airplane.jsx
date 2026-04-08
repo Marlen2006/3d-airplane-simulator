@@ -6,7 +6,7 @@ import * as THREE from 'three'
 // Preload the model
 useGLTF.preload('/models/f22_raptor.glb')
 
-const Airplane = forwardRef(({ roll = 0, pitch = 0, yaw = 0, isFiring = false }, ref) => {
+const Airplane = forwardRef(({ roll = 0, pitch = 0, yaw = 0, throttle = 1.0, isFiring = false }, ref) => {
   const groupRef = useRef()
   const modelRef = useRef()
   const timeRef = useRef(0)
@@ -39,41 +39,51 @@ const Airplane = forwardRef(({ roll = 0, pitch = 0, yaw = 0, isFiring = false },
     if (!groupRef.current) return
     timeRef.current += delta
 
-    // Remapped Control Logic:
-    // Sensor Roll -> Nose Pitch
-    // Sensor Pitch -> Yaw Turn
+    // Remapped Control Logic for Real Flight:
+    // In demo mode, rawRoll comes from W/S (pitch) and rawPitch from A/D (roll). Wait, App.jsx maps:
+    // "keys.current.left -> rawRoll = -MAX_ROLL". So rawRoll is actually Roll (Bank).
+    // "keys.current.up -> rawPitch = -MAX_PITCH". So rawPitch is Pitch (Nose up/down).
     
-    // Sensitivity and normalization
-    const PITCH_SENSITIVITY = 0.5 
-    const YAW_SENSITIVITY = 0.5
+    const inputRollDeg = Math.max(-85, Math.min(85, roll))
+    const inputPitchDeg = Math.max(-85, Math.min(85, pitch))
     
-    let inputRollDeg = roll
-    if (inputRollDeg > 180) inputRollDeg -= 360
-    let inputPitchDeg = pitch
-    if (inputPitchDeg > 180) inputPitchDeg -= 360
-    inputRollDeg = Math.max(-85, Math.min(85, inputRollDeg))
+    // Flight stick inputs (normalized -1 to 1)
+    const stickRoll = inputRollDeg / 60.0
+    const stickPitch = inputPitchDeg / 45.0
+
+    // Aerodynamic constants
+    const rollRate = 1.8 * delta
+    const pitchRate = 1.2 * delta
+    const baseSpeed = 30 + (throttle * 30) // meters per second
+
+    // Apply rotation relative to current orientation
+    groupRef.current.rotateZ(-stickRoll * rollRate)
+    groupRef.current.rotateX(stickPitch * pitchRate)
     
-    const inputRollRad  = (inputRollDeg  * Math.PI) / 180 * PITCH_SENSITIVITY
-    const inputPitchRad = (inputPitchDeg * Math.PI) / 180 * YAW_SENSITIVITY
-
-    // Target rotations
-    const targetPitch = -inputRollRad 
-    const targetYaw = inputPitchRad 
-    const targetBank = -inputPitchRad * 1.5 
-
-    groupRef.current.rotation.x = THREE.MathUtils.lerp(groupRef.current.rotation.x, targetPitch, 0.06)
-    groupRef.current.rotation.y = THREE.MathUtils.lerp(groupRef.current.rotation.y, targetYaw, 0.06)
-    groupRef.current.rotation.z = THREE.MathUtils.lerp(groupRef.current.rotation.z, targetBank, 0.1)
-
-    // Positional "Lag" Drift
-    const driftIntensity = 5.0
-    const liftIntensity = 3.5
+    // Passive turn (Yaw) due to banking (lift vector redirection)
+    // A banked plane will naturally drop its nose and turn.
+    // We get current bank angle:
+    const euler = new THREE.Euler().setFromQuaternion(groupRef.current.quaternion, 'YXZ')
+    const currentBank = euler.z
     
-    groupRef.current.position.x = THREE.MathUtils.lerp(groupRef.current.position.x, (inputPitchRad * driftIntensity), 0.05)
-    groupRef.current.position.y = THREE.MathUtils.lerp(groupRef.current.position.y, (-inputRollRad * liftIntensity), 0.05)
+    // Apply turn rate proportional to bank angle
+    const turnRate = -Math.sin(currentBank) * 0.8 * delta
+    // Apply pitch drop proportional to bank (requires pulling back on stick to stay level!)
+    const pitchDrop = Math.abs(Math.sin(currentBank)) * 0.2 * delta
+    
+    groupRef.current.rotateY(turnRate)
+    groupRef.current.rotateX(-pitchDrop)
 
-    // Vibration
-    groupRef.current.position.y += Math.sin(timeRef.current * 40) * 0.0015
+    // Self-righting tendency (aerodynamic stability)
+    if (Math.abs(stickRoll) < 0.05) {
+      groupRef.current.rotateZ(-currentBank * 1.5 * delta)
+    }
+
+    // Move forward in local space (-Z)
+    groupRef.current.translateZ(-baseSpeed * delta)
+
+    // Vibration based on throttle
+    modelRef.current.position.y = Math.sin(timeRef.current * (30 + throttle * 20)) * (0.001 + throttle * 0.001)
   })
 
   return (
