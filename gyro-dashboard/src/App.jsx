@@ -169,11 +169,83 @@ export default function App() {
     }
   }, [connected])
 
-  // --- AUDIO SYNTHESIZER ---
+  // --- AUDIO SYNTHESIZER & ENGINE AUDIO ---
   const audioCtx = useRef(null)
+  const engineSynths = useRef(null)
+
   const initAudio = () => {
     if (!audioCtx.current) {
       audioCtx.current = new (window.AudioContext || window.webkitAudioContext)()
+    }
+    const ctx = audioCtx.current
+    if (ctx.state === 'suspended') {
+      ctx.resume()
+    }
+
+    // Initialize procedural jet engine sound if not done yet
+    if (!engineSynths.current) {
+      const bufferSize = ctx.sampleRate * 2 // 2 seconds of noise buffer
+      const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate)
+      const data = buffer.getChannelData(0)
+      
+      // Generate Brownian noise for the low engine rumble
+      let lastOut = 0
+      for (let i = 0; i < bufferSize; i++) {
+        const white = Math.random() * 2 - 1
+        data[i] = (lastOut + (0.02 * white)) / 1.02
+        lastOut = data[i]
+        data[i] *= 3.5 // Compensate for brownian gain loss
+      }
+
+      const noiseSrc = ctx.createBufferSource()
+      noiseSrc.buffer = buffer
+      noiseSrc.loop = true
+      
+      // Filter the noise to sound like a jet engine
+      const lowpass = ctx.createBiquadFilter()
+      lowpass.type = 'lowpass'
+      lowpass.frequency.value = 800
+      
+      const highpass = ctx.createBiquadFilter()
+      highpass.type = 'highpass'
+      highpass.frequency.value = 120
+      
+      // Add a resonant whine for the jet turbine
+      const turbineOsc = ctx.createOscillator()
+      turbineOsc.type = 'sawtooth'
+      turbineOsc.frequency.value = 2500
+      
+      // Try to smooth the sawtooth slightly
+      const turbineFilter = ctx.createBiquadFilter()
+      turbineFilter.type = 'lowpass'
+      turbineFilter.frequency.value = 4000
+      
+      const turbineGain = ctx.createGain()
+      turbineGain.gain.value = 0.03
+      
+      const mainGain = ctx.createGain()
+      mainGain.gain.value = 0.3 // Master volume
+      
+      // Routing
+      noiseSrc.connect(highpass)
+      highpass.connect(lowpass)
+      lowpass.connect(mainGain)
+      
+      turbineOsc.connect(turbineFilter)
+      turbineFilter.connect(turbineGain)
+      turbineGain.connect(mainGain)
+      
+      mainGain.connect(ctx.destination)
+      
+      noiseSrc.start()
+      turbineOsc.start()
+      
+      engineSynths.current = {
+        mainGain,
+        lowpass,
+        turbineOsc,
+        turbineGain
+      }
     }
   }
 
@@ -239,12 +311,43 @@ export default function App() {
   }, [playExplosionSound])
 
   useEffect(() => {
-    if (audioCtx.current && audioCtx.current.state === 'suspended') {
-      const resume = () => audioCtx.current.resume()
-      window.addEventListener('click', resume, { once: true })
-      return () => window.removeEventListener('click', resume)
+    const resume = () => {
+      initAudio()
+      if (audioCtx.current && audioCtx.current.state === 'suspended') {
+        audioCtx.current.resume()
+      }
+    }
+    window.addEventListener('click', resume, { once: true })
+    window.addEventListener('keydown', resume, { once: true })
+    return () => {
+      window.removeEventListener('click', resume)
+      window.removeEventListener('keydown', resume)
     }
   }, [])
+
+  // Update procedural engine audio based on throttle
+  useEffect(() => {
+    if (engineSynths.current && audioCtx.current) {
+      const { mainGain, lowpass, turbineOsc, turbineGain } = engineSynths.current
+      const t = audioCtx.current.currentTime
+      
+      // Overall volume
+      const vol = 0.2 + (throttle * 0.1)
+      mainGain.gain.setTargetAtTime(Math.min(Math.max(vol, 0.05), 0.8), t, 0.2)
+      
+      // Throttle increases the high frequency cut-off -> more harsh noise
+      const freq = 600 + (throttle * 900)
+      lowpass.frequency.setTargetAtTime(Math.min(Math.max(freq, 400), 5000), t, 0.2)
+      
+      // Turbine whine frequency pitch goes up with throttle
+      const turbineFreq = 1500 + (throttle * 800)
+      turbineOsc.frequency.setTargetAtTime(turbineFreq, t, 0.2)
+      
+      // Turbine whine volume goes up slightly with throttle
+      const whineVol = 0.01 + (throttle * 0.02)
+      turbineGain.gain.setTargetAtTime(Math.min(whineVol, 0.15), t, 0.2)
+    }
+  }, [throttle])
 
   // Computed values
   const roll  = rawRoll - offsets.roll
