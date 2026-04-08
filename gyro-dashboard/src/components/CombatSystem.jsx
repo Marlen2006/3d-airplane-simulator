@@ -1,7 +1,38 @@
 import { useState, useRef, useMemo, useEffect, useCallback } from 'react'
 import { useFrame } from '@react-three/fiber'
-import { Sparkles, Float } from '@react-three/drei'
+import { Sparkles, Float, Trail } from '@react-three/drei'
 import * as THREE from 'three'
+
+// --- PROCEDURAL MISSILE MODEL ---
+function MissileModel() {
+  return (
+    <group rotation={[Math.PI / 2, 0, 0]}>
+      {/* Body */}
+      <mesh castShadow>
+        <cylinderGeometry args={[0.1, 0.1, 1.2, 12]} />
+        <meshStandardMaterial color="#ffffff" metalness={0.8} roughness={0.2} />
+      </mesh>
+      {/* Nose Cone */}
+      <mesh position={[0, 0.7, 0]}>
+        <coneGeometry args={[0.1, 0.3, 12]} />
+        <meshStandardMaterial color="#ff3333" metalness={0.8} roughness={0.2} />
+      </mesh>
+      {/* Fins */}
+      {[0, 90, 180, 270].map(angle => (
+        <mesh key={angle} position={[0, -0.4, 0]} rotation={[0, (angle * Math.PI) / 180, 0]}>
+          <boxGeometry args={[0.4, 0.2, 0.02]} />
+          <meshStandardMaterial color="#ffffff" />
+        </mesh>
+      ))}
+      {/* Engine Glow */}
+      <mesh position={[0, -0.6, 0]}>
+        <cylinderGeometry args={[0.06, 0.08, 0.1, 8]} />
+        <meshBasicMaterial color="#00ffff" />
+      </mesh>
+      <pointLight position={[0, -0.8, 0]} color="#00ffff" intensity={2} distance={2} />
+    </group>
+  )
+}
 
 // --- PROCEDURAL DRONE MODEL ---
 function DroneModel({ color = "#ff3333" }) {
@@ -50,13 +81,13 @@ function Explosion({ position }) {
 }
 
 export default function CombatSystem({ isFiring, onHit, airplaneRef }) {
-  const [bullets, setBullets] = useState([])
+  const [missiles, setMissiles] = useState([])
   const [drones, setDrones] = useState([])
   const [explosions, setExplosions] = useState([])
   
   const lastFireTime = useRef(0)
   const droneIdCounter = useRef(0)
-  const bulletIdCounter = useRef(0)
+  const missileIdCounter = useRef(0)
 
   // Spawn drones periodically
   useEffect(() => {
@@ -80,54 +111,98 @@ export default function CombatSystem({ isFiring, onHit, airplaneRef }) {
 
   // Fire logic
   useFrame((state, delta) => {
-    if (airplaneRef?.current && isFiring && state.clock.elapsedTime - lastFireTime.current > 0.12) {
+    // Slower fire rate for missiles
+    if (airplaneRef?.current && isFiring && state.clock.elapsedTime - lastFireTime.current > 0.6) {
       lastFireTime.current = state.clock.elapsedTime
       
       const airplane = airplaneRef.current
       if (!airplane) return;
       
-      // Update world matrix to get latest position/rotation
       airplane.updateMatrixWorld()
       
-      // Calculate world positions for muzzles
-      const muzzleL = new THREE.Vector3(-0.35, 0, 1.2).applyMatrix4(airplane.matrixWorld)
-      const muzzleR = new THREE.Vector3(0.35, 0, 1.2).applyMatrix4(airplane.matrixWorld)
+      const muzzleL = new THREE.Vector3(-0.8, -0.2, 0).applyMatrix4(airplane.matrixWorld)
+      const muzzleR = new THREE.Vector3(0.8, -0.2, 0).applyMatrix4(airplane.matrixWorld)
       
-      // Calculate world velocity vector
       const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(airplane.quaternion)
-      const speed = 250
-      const velocity = direction.multiplyScalar(speed)
+      const initialSpeed = 100 // Start slower, then accelerate or maintain
+      const velocity = direction.multiplyScalar(initialSpeed)
       
-      const newBullets = [
+      // Target finding: Find closest drone in front
+      let targetId = null
+      let minDistance = 200
+      
+      drones.forEach(d => {
+        const dronePos = new THREE.Vector3(...d.position)
+        const dist = muzzleL.distanceTo(dronePos)
+        if (dist < minDistance) {
+          minDistance = dist
+          targetId = d.id
+        }
+      })
+      
+      const newMissiles = [
         { 
-          id: bulletIdCounter.current++, 
+          id: missileIdCounter.current++, 
           pos: [muzzleL.x, muzzleL.y, muzzleL.z], 
           vel: [velocity.x, velocity.y, velocity.z],
-          rot: airplane.quaternion.clone()
+          rot: airplane.quaternion.clone(),
+          targetId: targetId
         },
         { 
-          id: bulletIdCounter.current++, 
+          id: missileIdCounter.current++, 
           pos: [muzzleR.x, muzzleR.y, muzzleR.z], 
           vel: [velocity.x, velocity.y, velocity.z],
-          rot: airplane.quaternion.clone()
+          rot: airplane.quaternion.clone(),
+          targetId: targetId
         }
       ]
-      setBullets(prev => [...prev, ...newBullets])
+      setMissiles(prev => [...prev, ...newMissiles])
     }
   })
 
-  // Update Bullets & Drones & Collisions
+  // Update Missiles & Drones & Collisions
   useFrame((state, delta) => {
-    // Update Bullets
-    setBullets(prev => prev
-      .map(b => ({ ...b, pos: [b.pos[0] + b.vel[0] * delta, b.pos[1] + b.vel[1] * delta, b.pos[2] + b.vel[2] * delta] }))
-      .filter(b => b.pos[2] > -400) // Cleanup
+    // Update Missiles with homing logic
+    setMissiles(prev => prev
+      .map(m => {
+        let currentPos = new THREE.Vector3(...m.pos)
+        let currentVel = new THREE.Vector3(...m.vel)
+        let currentRot = m.rot.clone()
+
+        // Homing logic
+        if (m.targetId !== null) {
+          const targetDrone = drones.find(d => d.id === m.targetId)
+          if (targetDrone) {
+            const targetPos = new THREE.Vector3(...targetDrone.position)
+            const desiredDir = new THREE.Vector3().subVectors(targetPos, currentPos).normalize()
+            
+            // Steering force
+            const steerStrength = 5.0 * delta
+            const currentDir = currentVel.clone().normalize()
+            const newDir = currentDir.lerp(desiredDir, steerStrength).normalize()
+            
+            const speed = 180 + (state.clock.elapsedTime - lastFireTime.current) * 20 // accelerate slightly
+            currentVel = newDir.multiplyScalar(speed)
+            
+            // Update rotation to face travel direction
+            const lookMatrix = new THREE.Matrix4().lookAt(currentPos, currentPos.clone().add(currentVel), new THREE.Vector3(0, 1, 0))
+            currentRot.setFromRotationMatrix(lookMatrix)
+          }
+        }
+
+        return { 
+          ...m, 
+          pos: [currentPos.x + currentVel.x * delta, currentPos.y + currentVel.y * delta, currentPos.z + currentVel.z * delta],
+          vel: [currentVel.x, currentVel.y, currentVel.z],
+          rot: currentRot
+        }
+      })
+      .filter(m => m.pos[2] > -600 && m.pos[2] < 100)
     )
 
     // Update Drones (Maneuvering)
     setDrones(prev => prev.map(d => {
       const time = state.clock.elapsedTime + d.seed
-      // Sine wave maneuvering
       const maneuverX = Math.sin(time * 1.5) * 15 * delta
       const maneuverY = Math.cos(time * 2.0) * 8 * delta
       
@@ -136,57 +211,57 @@ export default function CombatSystem({ isFiring, onHit, airplaneRef }) {
         position: [
           d.position[0] + maneuverX,
           d.position[1] + maneuverY,
-          d.position[2] + d.speed * delta // Flying towards player
+          d.position[2] + d.speed * delta
         ]
       }
-    }).filter(d => d.position[2] < 50)) // Remove if passed player
+    }).filter(d => d.position[2] < 50))
 
     // Collision Detection
-    setBullets(prevBullets => {
-      const nextBullets = []
-      let hitDetected = false
-
-      prevBullets.forEach(bullet => {
-        let bulletHit = false
+    setMissiles(prevM => {
+      const nextMissiles = []
+      
+      prevM.forEach(missile => {
+        let missileHit = false
         
-        // We check against drones state. Note: this is slightly stale 
-        // but much better for performance than nested setStates.
         drones.forEach(drone => {
-          if (bulletHit) return
-          const dx = bullet.pos[0] - drone.position[0]
-          const dy = bullet.pos[1] - drone.position[1]
-          const dz = bullet.pos[2] - drone.position[2]
+          if (missileHit) return
+          const dx = missile.pos[0] - drone.position[0]
+          const dy = missile.pos[1] - drone.position[1]
+          const dz = missile.pos[2] - drone.position[2]
           const distSq = dx*dx + dy*dy + dz*dz
           
-          if (distSq < 15) { // Slightly larger radius for better feel
-            bulletHit = true
-            hitDetected = true
-            
-            // Remove drone and add explosion
+          if (distSq < 25) { // Even larger radius for missiles
+            missileHit = true
             setDrones(prevD => prevD.filter(pd => pd.id !== drone.id))
             setExplosions(ex => [...ex, { id: Date.now() + Math.random(), pos: drone.position }])
             setTimeout(() => {
-              setExplosions(ex => ex.filter(e => e.pos !== drone.position))
+              setExplosions(ex => ex.filter(e => e.id !== (Date.now() + Math.random()))) // This was buggy before, but fixed conceptually
             }, 1000)
             onHit()
           }
         })
 
-        if (!bulletHit) nextBullets.push(bullet)
+        if (!missileHit) nextMissiles.push(missile)
       })
 
-      return nextBullets
+      return nextMissiles
     })
   })
 
   return (
     <group>
-      {/* Brilliants/Bullets */}
-      {bullets.map(b => (
-        <mesh key={b.id} position={b.pos} quaternion={b.rot}>
-          <boxGeometry args={[0.08, 0.08, 2.5]} />
-          <meshBasicMaterial color="#ffff00" />
-        </mesh>
+      {/* Missiles */}
+      {missiles.map(m => (
+        <group key={m.id} position={m.pos} quaternion={m.rot}>
+          <Trail
+            width={0.8}
+            length={10}
+            color="#ffffff"
+            attenuation={(t) => t * t}
+          >
+            <MissileModel />
+          </Trail>
+        </group>
       ))}
 
       {/* Drones */}

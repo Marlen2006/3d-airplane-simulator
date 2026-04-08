@@ -249,24 +249,31 @@ export default function App() {
     }
   }
 
-  const playShootSound = useCallback(() => {
+  const playMissileLaunchSound = useCallback(() => {
     initAudio()
     const ctx = audioCtx.current
-    const osc = ctx.createOscillator()
+    const noise = ctx.createBufferSource()
+    const buffer = ctx.createBuffer(1, ctx.sampleRate * 0.4, ctx.sampleRate)
+    const data = buffer.getChannelData(0)
+    for (let i = 0; i < buffer.length; i++) data[i] = Math.random() * 2 - 1
+    
+    noise.buffer = buffer
     const gain = ctx.createGain()
+    const filter = ctx.createBiquadFilter()
     
-    osc.type = 'square'
-    osc.frequency.setValueAtTime(150, ctx.currentTime)
-    osc.frequency.exponentialRampToValueAtTime(40, ctx.currentTime + 0.1)
+    filter.type = 'lowpass'
+    filter.frequency.setValueAtTime(1000, ctx.currentTime)
+    filter.frequency.exponentialRampToValueAtTime(100, ctx.currentTime + 0.4)
     
-    gain.gain.setValueAtTime(0.1, ctx.currentTime)
-    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.1)
+    gain.gain.setValueAtTime(0.2, ctx.currentTime)
+    gain.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.4)
     
-    osc.connect(gain)
+    noise.connect(filter)
+    filter.connect(gain)
     gain.connect(ctx.destination)
     
-    osc.start()
-    osc.stop(ctx.currentTime + 0.1)
+    noise.start()
+    noise.stop(ctx.currentTime + 0.4)
   }, [])
 
   const playExplosionSound = useCallback(() => {
@@ -299,11 +306,11 @@ export default function App() {
   // Trigger sound on fire
   const lastFireTime = useRef(0)
   useEffect(() => {
-    if (isFiring && Date.now() - lastFireTime.current > 120) {
-      playShootSound()
+    if (isFiring && Date.now() - lastFireTime.current > 600) {
+      playMissileLaunchSound()
       lastFireTime.current = Date.now()
     }
-  }, [isFiring, playShootSound])
+  }, [isFiring, playMissileLaunchSound])
 
   const onHit = useCallback(() => {
     setScore(s => s + 100)
