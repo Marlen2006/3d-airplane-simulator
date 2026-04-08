@@ -172,6 +172,7 @@ export default function App() {
   // --- AUDIO SYNTHESIZER & ENGINE AUDIO ---
   const audioCtx = useRef(null)
   const engineSynths = useRef(null)
+  const missileSoundRef = useRef(null)
 
   const initAudio = () => {
     if (!audioCtx.current) {
@@ -182,26 +183,24 @@ export default function App() {
       ctx.resume()
     }
 
-    // Initialize procedural jet engine sound if not done yet
+    // Restore procedural jet engine sound if not done yet
     if (!engineSynths.current) {
       const bufferSize = ctx.sampleRate * 2 // 2 seconds of noise buffer
       const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate)
       const data = buffer.getChannelData(0)
       
-      // Generate Brownian noise for the low engine rumble
       let lastOut = 0
       for (let i = 0; i < bufferSize; i++) {
         const white = Math.random() * 2 - 1
         data[i] = (lastOut + (0.02 * white)) / 1.02
         lastOut = data[i]
-        data[i] *= 3.5 // Compensate for brownian gain loss
+        data[i] *= 3.5
       }
 
       const noiseSrc = ctx.createBufferSource()
       noiseSrc.buffer = buffer
       noiseSrc.loop = true
       
-      // Filter the noise to sound like a jet engine
       const lowpass = ctx.createBiquadFilter()
       lowpass.type = 'lowpass'
       lowpass.frequency.value = 800
@@ -210,12 +209,10 @@ export default function App() {
       highpass.type = 'highpass'
       highpass.frequency.value = 120
       
-      // Add a resonant whine for the jet turbine
       const turbineOsc = ctx.createOscillator()
       turbineOsc.type = 'sawtooth'
       turbineOsc.frequency.value = 2500
       
-      // Try to smooth the sawtooth slightly
       const turbineFilter = ctx.createBiquadFilter()
       turbineFilter.type = 'lowpass'
       turbineFilter.frequency.value = 4000
@@ -224,9 +221,8 @@ export default function App() {
       turbineGain.gain.value = 0.03
       
       const mainGain = ctx.createGain()
-      mainGain.gain.value = 0.3 // Master volume
+      mainGain.gain.value = 0.3
       
-      // Routing
       noiseSrc.connect(highpass)
       highpass.connect(lowpass)
       lowpass.connect(mainGain)
@@ -247,33 +243,23 @@ export default function App() {
         turbineGain
       }
     }
+
+    // Preload missile launch sound if not already done
+    if (!missileSoundRef.current) {
+      const audio = new Audio('/sounds/missile_launch.mp3')
+      audio.volume = 0.4
+      missileSoundRef.current = audio
+    }
   }
 
   const playMissileLaunchSound = useCallback(() => {
     initAudio()
-    const ctx = audioCtx.current
-    const noise = ctx.createBufferSource()
-    const buffer = ctx.createBuffer(1, ctx.sampleRate * 0.4, ctx.sampleRate)
-    const data = buffer.getChannelData(0)
-    for (let i = 0; i < buffer.length; i++) data[i] = Math.random() * 2 - 1
-    
-    noise.buffer = buffer
-    const gain = ctx.createGain()
-    const filter = ctx.createBiquadFilter()
-    
-    filter.type = 'lowpass'
-    filter.frequency.setValueAtTime(1000, ctx.currentTime)
-    filter.frequency.exponentialRampToValueAtTime(100, ctx.currentTime + 0.4)
-    
-    gain.gain.setValueAtTime(0.2, ctx.currentTime)
-    gain.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.4)
-    
-    noise.connect(filter)
-    filter.connect(gain)
-    gain.connect(ctx.destination)
-    
-    noise.start()
-    noise.stop(ctx.currentTime + 0.4)
+    if (missileSoundRef.current) {
+      // Create a clone to allow rapid firing if needed
+      const sound = missileSoundRef.current.cloneNode()
+      sound.volume = 0.4
+      sound.play().catch(e => console.warn('Audio play blocked:', e))
+    }
   }, [])
 
   const playExplosionSound = useCallback(() => {
